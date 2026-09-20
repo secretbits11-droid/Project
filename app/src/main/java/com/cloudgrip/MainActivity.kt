@@ -70,15 +70,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startOverlay() {
-        if (Settings.canDrawOverlays(this)) {
-            val intent = Intent(this, OverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } else {
+        if (!hasOverlayPermission) {
             requestOverlayPermission()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+            checkAndRequestNotificationPermission()
+            return
+        }
+        val intent = Intent(this, OverlayService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
         }
     }
 
@@ -94,7 +98,7 @@ class MainActivity : ComponentActivity() {
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:$packageName")
         )
-        startActivity(intent)
+        overlayPermissionLauncher.launch(intent)
     }
 }
 

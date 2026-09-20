@@ -17,16 +17,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.*
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
@@ -77,14 +79,17 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         params.gravity = Gravity.TOP or Gravity.START
 
         composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setViewTreeLifecycleOwner(this@OverlayService)
             setViewTreeViewModelStoreOwner(this@OverlayService)
             setViewTreeSavedStateRegistryOwner(this@OverlayService)
             setContent {
-                GamepadOverlay(
-                    controller = gamepadController,
-                    onClose = { stopSelf() }
-                )
+                MaterialTheme {
+                    GamepadOverlay(
+                        controller = gamepadController,
+                        onClose = { stopSelf() }
+                    )
+                }
             }
         }
         windowManager.addView(composeView, params)
@@ -101,7 +106,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
-        return androidx.core.app.NotificationCompat.Builder(this, channelId)
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("CloudGrip Active")
             .setContentText("Floating gamepad is running.")
             .setSmallIcon(android.R.drawable.ic_menu_always_landscape_portrait)
@@ -117,7 +122,9 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         store.clear()
         if (::composeView.isInitialized) {
             composeView.disposeComposition()
-            windowManager.removeView(composeView)
+            if (composeView.isAttachedToWindow) {
+                windowManager.removeView(composeView)
+            }
         }
     }
 
@@ -140,7 +147,7 @@ fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit) {
         Column(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .background(Color.Black.copy(alpha = 0.75f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(16.dp))
                 .padding(12.dp)
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
