@@ -58,6 +58,14 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
+
     private fun showOverlay() {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -73,7 +81,10 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             setViewTreeViewModelStoreOwner(this@OverlayService)
             setViewTreeSavedStateRegistryOwner(this@OverlayService)
             setContent {
-                GamepadOverlay(gamepadController)
+                GamepadOverlay(
+                    controller = gamepadController,
+                    onClose = { stopSelf() }
+                )
             }
         }
         windowManager.addView(composeView, params)
@@ -82,24 +93,36 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     private fun createNotification(): Notification {
         val channelId = "CloudGripChannel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "CloudGrip Overlay", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(
+                channelId,
+                "CloudGrip Overlay",
+                NotificationManager.IMPORTANCE_LOW
+            )
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            manager?.createNotificationChannel(channel)
         }
-        return Notification.Builder(this, channelId)
+        return androidx.core.app.NotificationCompat.Builder(this, channelId)
             .setContentTitle("CloudGrip Active")
             .setContentText("Floating gamepad is running.")
             .setSmallIcon(android.R.drawable.ic_menu_always_landscape_portrait)
+            .setOngoing(true)
             .build()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         if (::composeView.isInitialized) {
+            composeView.disposeComposition()
             windowManager.removeView(composeView)
         }
+    }
+
+    companion object {
+        const val ACTION_STOP = "com.cloudgrip.action.STOP"
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -109,17 +132,16 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 }
 
 @Composable
-fun GamepadOverlay(controller: GamepadController) {
-    // A simple draggable button layout representing the custom layout engine
+fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit) {
     var offsetX by remember { mutableStateOf(100f) }
-    var offsetY by remember { mutableStateOf(100f) }
+    var offsetY by remember { mutableStateOf(200f) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Box(
+        Column(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .size(80.dp)
-                .background(Color.Red.copy(alpha = 0.7f), CircleShape)
+                .background(Color.Black.copy(alpha = 0.75f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                .padding(12.dp)
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
@@ -127,10 +149,23 @@ fun GamepadOverlay(controller: GamepadController) {
                         offsetY += dragAmount.y
                     }
                 },
-            contentAlignment = Alignment.Center
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Button(onClick = { controller.sendButtonPress("A") }) {
-                Text("A")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(onClick = { controller.sendButtonPress("X") }) { Text("X") }
+                Button(onClick = { controller.sendButtonPress("Y") }) { Text("Y") }
+                Button(onClick = { controller.sendButtonPress("A") }) { Text("A") }
+                Button(onClick = { controller.sendButtonPress("B") }) { Text("B") }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onClose,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Close")
             }
         }
     }
