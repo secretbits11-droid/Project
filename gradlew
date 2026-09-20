@@ -116,7 +116,7 @@ fi
 # Auto-download wrapper jar if missing
 if [ ! -e "$CLASSPATH" ]; then
     mkdir -p "$APP_HOME/gradle/wrapper"
-    JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradle/wrapper/gradle-wrapper.jar"
+    JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v8.10.2/gradle/wrapper/gradle-wrapper.jar"
     if command -v curl >/dev/null 2>&1; then
         curl -fsSLo "$CLASSPATH" "$JAR_URL" 2>/dev/null || true
     elif command -v wget >/dev/null 2>&1; then
