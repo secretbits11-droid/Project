@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private var hasOverlayPermission by mutableStateOf(false)
@@ -39,12 +40,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startOverlay() {
         if (Settings.canDrawOverlays(this)) {
-            val intent = Intent(this, OverlayService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
+            ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java))
         } else {
             requestOverlayPermission()
         }
