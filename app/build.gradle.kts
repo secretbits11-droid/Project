@@ -33,7 +33,7 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
-        freeCompilerArgs += listOf("-Xjvm-default=all")
+        freeCompilerArgs += listOf("-Xjvm-default=all", "-Xmax-inline-bytecode-size=0")
     }
     buildFeatures {
         compose = true

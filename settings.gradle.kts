@@ -20,3 +20,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CloudGrip"
 include(":app")
+
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")

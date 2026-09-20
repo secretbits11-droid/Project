@@ -147,9 +147,11 @@ if "$cygwin" || "$msys" ; then
 fi
 
 # Collect all arguments for the java command, then run the command.
+DEFAULT_JVM_OPTS="-Xmx2g -XX:+UseG1GC"
 set -- \
         $JAVA_OPTS \
         $GRADLE_OPTS \
+        $DEFAULT_JVM_OPTS \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -classpath "$CLASSPATH" \
         org.gradle.wrapper.GradleWrapperMain \
