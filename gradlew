@@ -54,6 +54,11 @@ warn () {
 die () {
     echo
     echo "$*"
+    echo "Try:"
+    echo "> Run with --stacktrace option to get the stack trace."
+    echo "> Run with --info or --debug option to get more log output."
+    echo "> Run with --scan to get full insights."
+    echo "> Get more help at https://help.gradle.org."
     echo
     exit 1
 } >&2
