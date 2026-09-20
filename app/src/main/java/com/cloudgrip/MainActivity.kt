@@ -12,14 +12,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+
+import android.os.Build
 
 class MainActivity : ComponentActivity() {
     private var hasOverlayPermission by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        hasOverlayPermission = Settings.canDrawOverlays(this)
+        updatePermissionState()
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -35,12 +36,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        updatePermissionState()
+    }
+
+    private fun updatePermissionState() {
         hasOverlayPermission = Settings.canDrawOverlays(this)
     }
 
     private fun startOverlay() {
         if (Settings.canDrawOverlays(this)) {
-            ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java))
+            val intent = Intent(this, OverlayService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
         } else {
             requestOverlayPermission()
         }
