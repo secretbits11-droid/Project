@@ -122,15 +122,20 @@ if [ ! -e "$CLASSPATH" ]; then
     elif command -v wget >/dev/null 2>&1; then
         wget -q -O "$CLASSPATH" "$JAR_URL" 2>/dev/null || true
     fi
+    [ -e "$CLASSPATH" ] && [ ! -s "$CLASSPATH" ] && rm -f "$CLASSPATH"
 fi
 
 # Fallback to gradle executable if wrapper jar is absent
-if [ ! -e "$CLASSPATH" ] && command -v gradle >/dev/null 2>&1; then
-    exec gradle "$@"
+if [ ! -e "$CLASSPATH" ]; then
+    if command -v gradle >/dev/null 2>&1; then
+        exec gradle "$@"
+    else
+        die "ERROR: Gradle wrapper JAR not found at $CLASSPATH and could not be downloaded, and 'gradle' command was not found in PATH."
+    fi
 fi
 
-# For Cygwin, switch paths to Windows format before running java
-if "$cygwin" ; then
+# For Cygwin or MSYS, switch paths to Windows format before running java
+if "$cygwin" || "$msys" ; then
     APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
     CLASSPATH=$( cygpath --path --mixed "$CLASSPATH" )
     JAVACMD=$( cygpath --unix "$JAVACMD" )
@@ -138,6 +143,8 @@ fi
 
 # Collect all arguments for the java command, then run the command.
 set -- \
+        $JAVA_OPTS \
+        $GRADLE_OPTS \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -classpath "$CLASSPATH" \
         org.gradle.wrapper.GradleWrapperMain \
