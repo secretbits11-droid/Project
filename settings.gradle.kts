@@ -4,12 +4,10 @@ pluginManagement {
         google()
         mavenCentral()
     }
-    resolutionStrategy {
-        eachPlugin {
-            if (requested.id.id.startsWith("com.android")) {
-                useModule("com.android.tools.build:gradle:${requested.version}")
-            }
-        }
+    plugins {
+        id("com.android.application") version "8.2.2" apply false
+        id("com.android.library") version "8.2.2" apply false
+        id("org.jetbrains.kotlin.android") version "1.9.22" apply false
     }
 }
 dependencyResolutionManagement {
