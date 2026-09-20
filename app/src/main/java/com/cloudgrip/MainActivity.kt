@@ -14,14 +14,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
+    private var hasOverlayPermission by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hasOverlayPermission = Settings.canDrawOverlays(this)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     CloudGripApp(
                         onStartOverlay = { startOverlay() },
-                        hasPermission = Settings.canDrawOverlays(this),
+                        hasPermission = hasOverlayPermission,
                         onRequestPermission = { requestOverlayPermission() }
                     )
                 }
@@ -29,9 +32,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        hasOverlayPermission = Settings.canDrawOverlays(this)
+    }
+
     private fun startOverlay() {
         if (Settings.canDrawOverlays(this)) {
-            startService(Intent(this, OverlayService::class.java))
+            val intent = Intent(this, OverlayService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
         } else {
             requestOverlayPermission()
         }
