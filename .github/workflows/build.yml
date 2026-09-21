@@ -26,11 +26,10 @@ jobs:
         gradle-version: '8.5'
 
     - name: Build Debug APK
-      uses: gradle/actions/setup-gradle@v4
+      uses: gradle/actions/execute-gradle@v4
       with:
+        gradle-version: '8.5'
         arguments: :app:assembleDebug --no-daemon --stacktrace --info
-      env:
-        ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
