@@ -28,6 +28,12 @@ class MainActivity : ComponentActivity() {
         hasNotificationPermission = isGranted
     }
 
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        updatePermissionStates()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         updatePermissionStates()
