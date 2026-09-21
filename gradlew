@@ -10,6 +10,11 @@
 # honoured consistently.
 if [ ! -x "$0" ]; then
     chmod +x -- "$0" 2>/dev/null || true
+    # Only re-exec if the chmod actually took effect, otherwise fall through
+    # and continue running in the current interpreter.
+    if [ -x "$0" ]; then
+        exec "$0" "$@"
+    fi
 fi
 
 #
