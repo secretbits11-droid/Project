@@ -1,5 +1,8 @@
 package com.cloudgrip
 
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,7 +15,9 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -28,7 +33,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -47,6 +55,49 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     private val store = ViewModelStore()
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
     private val gamepadController = GamepadController()
+
+    private val boundsMap = mutableMapOf<String, android.graphics.Rect>()
+    private val touchableRegion = android.graphics.Region()
+
+    fun updateTouchableRegion(key: String, rect: android.graphics.Rect?) {
+        if (rect == null) {
+            boundsMap.remove(key)
+        } else {
+            boundsMap[key] = rect
+        }
+        val newRegion = android.graphics.Region()
+        boundsMap.values.forEach { newRegion.op(it, android.graphics.Region.Op.UNION) }
+        touchableRegion.set(newRegion)
+        if (::composeView.isInitialized) {
+            composeView.requestLayout()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isLandscape = newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        GamepadState.isLandscape.value = isLandscape
+        if (!isLandscape) {
+            GamepadState.isMinimized.value = true
+        }
+        if (::composeView.isInitialized) {
+            windowManager.updateViewLayout(composeView, getLayoutParams())
+        }
+    }
+
+    private fun getLayoutParams(): WindowManager.LayoutParams {
+        return WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -73,17 +124,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     }
 
     private fun showOverlay() {
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT
-        )
-        // Ensure the overlay respects touch pass-through by setting specific window features if needed
-        params.gravity = Gravity.TOP or Gravity.START
+        val params = getLayoutParams()
 
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -94,11 +135,18 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                 MaterialTheme {
                     GamepadOverlay(
                         controller = gamepadController,
-                        onClose = { stopSelf() }
+                        onClose = { stopSelf() },
+                        updateRegion = ::updateTouchableRegion
                     )
                 }
             }
         }
+        
+        composeView.viewTreeObserver.addOnComputeInternalInsetsListener { info ->
+            info.setTouchableInsets(android.view.ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_REGION)
+            info.touchableRegion.set(touchableRegion)
+        }
+
         windowManager.addView(composeView, params)
     }
 
@@ -149,44 +197,75 @@ enum class OverlayMode {
     GAMEPAD, RACING
 }
 
+object GamepadState {
+    val isMinimized = mutableStateOf(false)
+    val isLandscape = mutableStateOf(true)
+}
+
+val LocalRegionUpdater = compositionLocalOf<(String, android.graphics.Rect?) -> Unit> { { _, _ -> } }
+
 @Composable
-fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit) {
-    var isMinimized by remember { mutableStateOf(false) }
-    var currentMode by remember { mutableStateOf(OverlayMode.GAMEPAD) }
+fun Modifier.touchable(key: String): Modifier {
+    val updater = LocalRegionUpdater.current
+    DisposableEffect(key) {
+        onDispose { updater(key, null) }
+    }
+    return this.onGloballyPositioned { coordinates ->
+        val bounds = coordinates.boundsInWindow()
+        updater(key, android.graphics.Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()))
+    }
+}
 
-    if (isMinimized) {
-        MinimizedBubble(
-            onRestore = { isMinimized = false }
-        )
-    } else {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (currentMode == OverlayMode.GAMEPAD) {
-                GamepadModeUI(controller)
-            } else {
-                RacingModeUI(controller)
+@Composable
+fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit, updateRegion: (String, android.graphics.Rect?) -> Unit) {
+    CompositionLocalProvider(LocalRegionUpdater provides updateRegion) {
+        val configuration = LocalConfiguration.current
+        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+        var isMinimized by GamepadState.isMinimized
+        var currentMode by remember { mutableStateOf(OverlayMode.GAMEPAD) }
+
+        LaunchedEffect(isLandscape) {
+            if (!isLandscape) {
+                isMinimized = true
             }
+        }
 
-            // Control Bar
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(16.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(onClick = { isMinimized = true }) { Text("Minimize") }
-                Button(onClick = { 
-                    currentMode = if (currentMode == OverlayMode.GAMEPAD) OverlayMode.RACING else OverlayMode.GAMEPAD 
-                }) { 
-                    Text(if (currentMode == OverlayMode.GAMEPAD) "Racing Mode" else "Gamepad Mode") 
+        if (isMinimized) {
+            MinimizedBubble(
+                onRestore = { isMinimized = false }
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (currentMode == OverlayMode.GAMEPAD) {
+                    GamepadModeUI(controller)
+                } else {
+                    RacingModeUI(controller)
                 }
-                Button(
-                    onClick = onClose,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+
+                // Control Bar
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .touchable("control_bar"),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Close")
+                    Button(onClick = { isMinimized = true }) { Text("Minimize") }
+                    Button(onClick = { 
+                        currentMode = if (currentMode == OverlayMode.GAMEPAD) OverlayMode.RACING else OverlayMode.GAMEPAD 
+                    }) { 
+                        Text(if (currentMode == OverlayMode.GAMEPAD) "Racing Mode" else "Gamepad Mode") 
+                    }
+                    Button(
+                        onClick = onClose,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Close")
+                    }
                 }
             }
         }
@@ -205,6 +284,7 @@ fun MinimizedBubble(onRestore: () -> Unit) {
             onClick = onRestore,
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .touchable("minimized_bubble")
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
@@ -229,11 +309,11 @@ fun GamepadModeUI(controller: GamepadController) {
                 .align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.touchable("left_bumpers")) {
                 Button(onClick = { controller.sendButtonPress("LT") }) { Text("LT") }
                 Button(onClick = { controller.sendButtonPress("LB") }) { Text("LB") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.touchable("right_bumpers")) {
                 Button(onClick = { controller.sendButtonPress("RB") }) { Text("RB") }
                 Button(onClick = { controller.sendButtonPress("RT") }) { Text("RT") }
             }
@@ -243,7 +323,8 @@ fun GamepadModeUI(controller: GamepadController) {
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
+                .padding(bottom = 32.dp)
+                .touchable("center_buttons"),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.Bottom
         ) {
@@ -260,11 +341,13 @@ fun GamepadModeUI(controller: GamepadController) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(32.dp)
         ) {
-            DPad(controller)
-            Joystick(onMove = { x, y -> 
-                controller.sendAxisEvent("LEFT_X", x)
-                controller.sendAxisEvent("LEFT_Y", y)
-            })
+            Box(modifier = Modifier.touchable("dpad")) { DPad(controller) }
+            Box(modifier = Modifier.touchable("left_joystick")) {
+                Joystick(onMove = { x, y -> 
+                    controller.sendAxisEvent("LEFT_X", x)
+                    controller.sendAxisEvent("LEFT_Y", y)
+                })
+            }
         }
 
         // Right Controls
@@ -275,11 +358,13 @@ fun GamepadModeUI(controller: GamepadController) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(32.dp)
         ) {
-            Joystick(onMove = { x, y -> 
-                controller.sendAxisEvent("RIGHT_X", x)
-                controller.sendAxisEvent("RIGHT_Y", y)
-            })
-            ActionButtons(controller)
+            Box(modifier = Modifier.touchable("right_joystick")) {
+                Joystick(onMove = { x, y -> 
+                    controller.sendAxisEvent("RIGHT_X", x)
+                    controller.sendAxisEvent("RIGHT_Y", y)
+                })
+            }
+            Box(modifier = Modifier.touchable("action_buttons")) { ActionButtons(controller) }
         }
     }
 }
@@ -292,6 +377,7 @@ fun RacingModeUI(controller: GamepadController) {
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(32.dp)
+                .touchable("steering_wheel")
         ) {
             SteeringWheel(controller)
         }
@@ -301,6 +387,7 @@ fun RacingModeUI(controller: GamepadController) {
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(32.dp)
+                .touchable("pedals")
         ) {
             Pedals(controller)
         }
@@ -492,42 +579,85 @@ fun Pedals(controller: GamepadController) {
     }
 }
 
-/**
- * Handles the translation of UI button presses into system-level gamepad events.
- * Note: True system-level injection (uinput) requires root access.
- * This class provides the scaffolding for root-based uinput injection.
- */
+class GamepadAccessibilityService : AccessibilityService() {
+    companion object {
+        var instance: GamepadAccessibilityService? = null
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+        serviceInfo = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            flags = AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() {}
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        return super.onUnbind(intent)
+    }
+}
+
 class GamepadController {
     private val TAG = "GamepadController"
+    private val instrumentation = Instrumentation()
+    private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     fun sendButtonPress(button: String) {
         Log.d(TAG, "Button pressed: $button")
-        // TODO in production: Write to /dev/uinput via JNI or execute su shell command
-        // Example of shell command approach (requires root):
-        // executeShellCommand("input keyevent ${getAndroidKeyCode(button)}")
+        val keyCode = getAndroidKeyCode(button)
+        if (keyCode != 0) {
+            executor.execute {
+                try {
+                    instrumentation.sendKeyDownUpSync(keyCode)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to inject key event for $button", e)
+                    executeShellCommand("input keyevent $keyCode")
+                }
+            }
+        }
     }
 
     fun sendAxisEvent(axis: String, value: Float) {
         Log.d(TAG, "Axis moved: $axis to $value")
-        // TODO in production: Inject axis event
+        executor.execute {
+            try {
+                when (axis) {
+                    "LEFT_X" -> {
+                        if (value < -0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                        else if (value > 0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    }
+                    "LEFT_Y" -> {
+                        if (value < -0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                        else if (value > 0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to inject axis event", e)
+            }
+        }
     }
 
     private fun getAndroidKeyCode(button: String): Int {
         return when (button) {
-            "A" -> 96 // KeyEvent.KEYCODE_BUTTON_A
-            "B" -> 97 // KeyEvent.KEYCODE_BUTTON_B
-            "X" -> 99 // KeyEvent.KEYCODE_BUTTON_X
-            "Y" -> 100 // KeyEvent.KEYCODE_BUTTON_Y
-            "LB" -> 102 // KeyEvent.KEYCODE_BUTTON_L1
-            "RB" -> 103 // KeyEvent.KEYCODE_BUTTON_R1
-            "LT" -> 104 // KeyEvent.KEYCODE_BUTTON_L2
-            "RT" -> 105 // KeyEvent.KEYCODE_BUTTON_R2
-            "START" -> 108 // KeyEvent.KEYCODE_BUTTON_START
-            "SELECT" -> 109 // KeyEvent.KEYCODE_BUTTON_SELECT
-            "UP" -> 19 // KeyEvent.KEYCODE_DPAD_UP
-            "DOWN" -> 20 // KeyEvent.KEYCODE_DPAD_DOWN
-            "LEFT" -> 21 // KeyEvent.KEYCODE_DPAD_LEFT
-            "RIGHT" -> 22 // KeyEvent.KEYCODE_DPAD_RIGHT
+            "A" -> KeyEvent.KEYCODE_BUTTON_A
+            "B" -> KeyEvent.KEYCODE_BUTTON_B
+            "X" -> KeyEvent.KEYCODE_BUTTON_X
+            "Y" -> KeyEvent.KEYCODE_BUTTON_Y
+            "LB" -> KeyEvent.KEYCODE_BUTTON_L1
+            "RB" -> KeyEvent.KEYCODE_BUTTON_R1
+            "LT" -> KeyEvent.KEYCODE_BUTTON_L2
+            "RT" -> KeyEvent.KEYCODE_BUTTON_R2
+            "START" -> KeyEvent.KEYCODE_BUTTON_START
+            "SELECT" -> KeyEvent.KEYCODE_BUTTON_SELECT
+            "UP" -> KeyEvent.KEYCODE_DPAD_UP
+            "DOWN" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "LEFT" -> KeyEvent.KEYCODE_DPAD_LEFT
+            "RIGHT" -> KeyEvent.KEYCODE_DPAD_RIGHT
             else -> 0
         }
     }
