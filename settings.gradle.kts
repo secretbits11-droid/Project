@@ -1,9 +1,8 @@
 pluginManagement {
     repositories {
-        // Gradle Plugin Portal first so the Kotlin Compose plugin (2.0.21) resolves correctly.
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
