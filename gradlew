@@ -157,4 +157,7 @@ set -- \
         org.gradle.wrapper.GradleWrapperMain \
         "$@"
 
+# Ensure the script itself is executable when invoked via 'sh gradlew'
+chmod +x "$0" 2>/dev/null || true
+
 exec "$JAVACMD" "$@"
