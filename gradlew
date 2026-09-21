@@ -1,5 +1,17 @@
 #!/bin/sh
 
+# Self-heal the executable bit.
+#
+# When this script is checked out from Git without the executable mode
+# (or extracted from an archive that dropped permissions), invoking it as
+# ./gradlew fails with "Permission denied" (exit code 126). If we got here
+# (e.g. via `sh gradlew`), restore the executable bit so subsequent direct
+# invocations work, then re-exec ourselves so the shebang/environment is
+# honoured consistently.
+if [ ! -x "$0" ]; then
+    chmod +x -- "$0" 2>/dev/null || true
+fi
+
 #
 # Copyright © 2015-2021 the original authors.
 #
@@ -156,8 +168,5 @@ set -- \
         -classpath "$CLASSPATH" \
         org.gradle.wrapper.GradleWrapperMain \
         "$@"
-
-# Ensure the script itself is executable when invoked via 'sh gradlew'
-chmod +x "$0" 2>/dev/null || true
 
 exec "$JAVACMD" "$@"
