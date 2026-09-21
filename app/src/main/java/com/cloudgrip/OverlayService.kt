@@ -21,6 +21,8 @@ import android.view.accessibility.AccessibilityEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +48,7 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.*
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
@@ -87,12 +90,12 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 
     private fun getLayoutParams(): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -141,7 +144,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                 }
             }
         }
-        
+
         composeView.viewTreeObserver.addOnComputeInternalInsetsListener { info ->
             info.setTouchableInsets(android.view.ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_REGION)
             info.touchableRegion.set(touchableRegion)
@@ -231,40 +234,44 @@ fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit, updateReg
             }
         }
 
-        if (isMinimized) {
-            MinimizedBubble(
-                onRestore = { isMinimized = false }
-            )
-        } else {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (currentMode == OverlayMode.GAMEPAD) {
-                    GamepadModeUI(controller)
-                } else {
-                    RacingModeUI(controller)
-                }
-
-                // Control Bar
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .touchable("control_bar"),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(onClick = { isMinimized = true }) { Text("Minimize") }
-                    Button(onClick = { 
-                        currentMode = if (currentMode == OverlayMode.GAMEPAD) OverlayMode.RACING else OverlayMode.GAMEPAD 
-                    }) { 
-                        Text(if (currentMode == OverlayMode.GAMEPAD) "Racing Mode" else "Gamepad Mode") 
-                    }
-                    Button(
-                        onClick = onClose,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+        // Root Box does NOT consume touches outside children because it has no pointerInput modifier.
+        // Touches falling outside the registered touchable regions will pass through to the OS.
+        Box(modifier = Modifier.wrapContentSize(Alignment.TopStart)) {
+            if (isMinimized) {
+                MinimizedBubble(
+                    onRestore = { isMinimized = false }
+                )
+            } else {
+                Column(modifier = Modifier.wrapContentSize()) {
+                    // Control Bar
+                    Row(
+                        modifier = Modifier
+                            .wrapContentWidth()
+                            .padding(16.dp)
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .touchable("control_bar"),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Close")
+                        Button(onClick = { isMinimized = true }) { Text("Minimize") }
+                        Button(onClick = {
+                            currentMode = if (currentMode == OverlayMode.GAMEPAD) OverlayMode.RACING else OverlayMode.GAMEPAD
+                        }) {
+                            Text(if (currentMode == OverlayMode.GAMEPAD) "Racing Mode" else "Gamepad Mode")
+                        }
+                        Button(
+                            onClick = onClose,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Close")
+                        }
+                    }
+
+                    if (currentMode == OverlayMode.GAMEPAD) {
+                        GamepadModeUI(controller)
+                    } else {
+                        RacingModeUI(controller)
                     }
                 }
             }
@@ -274,24 +281,26 @@ fun GamepadOverlay(controller: GamepadController, onClose: () -> Unit, updateReg
 
 @Composable
 fun MinimizedBubble(onRestore: () -> Unit) {
-    var offsetX by remember { mutableStateOf(100f) }
-    var offsetY by remember { mutableStateOf(100f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(200f) }
 
+    // Wrap content so only the bubble itself intercepts touches
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .wrapContentSize()
+            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+            .touchable("minimized_bubble")
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    offsetX += dragAmount.x
+                    offsetY += dragAmount.y
+                }
+            }
     ) {
         FloatingActionButton(
             onClick = onRestore,
-            modifier = Modifier
-                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .touchable("minimized_bubble")
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        offsetX += dragAmount.x
-                        offsetY += dragAmount.y
-                    }
-                }
+            modifier = Modifier.size(56.dp)
         ) {
             Text("🎮")
         }
@@ -300,22 +309,23 @@ fun MinimizedBubble(onRestore: () -> Unit) {
 
 @Composable
 fun GamepadModeUI(controller: GamepadController) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    // Use wrapContentSize instead of fillMaxSize so layout bounds match actual controls
+    Box(modifier = Modifier.wrapContentSize()) {
         // Top Bumpers
         Row(
             modifier = Modifier
-                .fillMaxWidth()
+                .wrapContentWidth()
                 .padding(32.dp)
                 .align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.touchable("left_bumpers")) {
-                Button(onClick = { controller.sendButtonPress("LT") }) { Text("LT") }
-                Button(onClick = { controller.sendButtonPress("LB") }) { Text("LB") }
+                GamepadButton(text = "LT", onPress = { controller.sendButtonDown("LT") }, onRelease = { controller.sendButtonUp("LT") })
+                GamepadButton(text = "LB", onPress = { controller.sendButtonDown("LB") }, onRelease = { controller.sendButtonUp("LB") })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.touchable("right_bumpers")) {
-                Button(onClick = { controller.sendButtonPress("RB") }) { Text("RB") }
-                Button(onClick = { controller.sendButtonPress("RT") }) { Text("RT") }
+                GamepadButton(text = "RB", onPress = { controller.sendButtonDown("RB") }, onRelease = { controller.sendButtonUp("RB") })
+                GamepadButton(text = "RT", onPress = { controller.sendButtonDown("RT") }, onRelease = { controller.sendButtonUp("RT") })
             }
         }
 
@@ -328,9 +338,9 @@ fun GamepadModeUI(controller: GamepadController) {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.Bottom
         ) {
-            Button(onClick = { controller.sendButtonPress("SELECT") }) { Text("Select") }
+            GamepadButton(text = "Select", onPress = { controller.sendButtonDown("SELECT") }, onRelease = { controller.sendButtonUp("SELECT") })
             Spacer(modifier = Modifier.width(16.dp))
-            Button(onClick = { controller.sendButtonPress("START") }) { Text("Start") }
+            GamepadButton(text = "Start", onPress = { controller.sendButtonDown("START") }, onRelease = { controller.sendButtonUp("START") })
         }
 
         // Left Controls
@@ -343,7 +353,7 @@ fun GamepadModeUI(controller: GamepadController) {
         ) {
             Box(modifier = Modifier.touchable("dpad")) { DPad(controller) }
             Box(modifier = Modifier.touchable("left_joystick")) {
-                Joystick(onMove = { x, y -> 
+                Joystick(onMove = { x, y ->
                     controller.sendAxisEvent("LEFT_X", x)
                     controller.sendAxisEvent("LEFT_Y", y)
                 })
@@ -359,7 +369,7 @@ fun GamepadModeUI(controller: GamepadController) {
             horizontalArrangement = Arrangement.spacedBy(32.dp)
         ) {
             Box(modifier = Modifier.touchable("right_joystick")) {
-                Joystick(onMove = { x, y -> 
+                Joystick(onMove = { x, y ->
                     controller.sendAxisEvent("RIGHT_X", x)
                     controller.sendAxisEvent("RIGHT_Y", y)
                 })
@@ -371,7 +381,7 @@ fun GamepadModeUI(controller: GamepadController) {
 
 @Composable
 fun RacingModeUI(controller: GamepadController) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.wrapContentSize()) {
         // Left Controls
         Box(
             modifier = Modifier
@@ -391,6 +401,35 @@ fun RacingModeUI(controller: GamepadController) {
         ) {
             Pedals(controller)
         }
+    }
+}
+
+@Composable
+fun GamepadButton(
+    text: String,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> onPress()
+                is PressInteraction.Release, is PressInteraction.Cancel -> onRelease()
+            }
+        }
+    }
+
+    Button(
+        onClick = { },
+        modifier = modifier,
+        interactionSource = interactionSource,
+        shape = RoundedCornerShape(8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(text)
     }
 }
 
@@ -423,7 +462,7 @@ fun Joystick(
                     change.consume()
                     val newX = thumbX + dragAmount.x
                     val newY = thumbY + dragAmount.y
-                    val distance = kotlin.math.hypot(newX, newY)
+                    val distance = kotlin.math.hypot(newX.toDouble(), newY.toDouble()).toFloat()
                     if (distance <= maxRadius) {
                         thumbX = newX
                         thumbY = newY
@@ -449,67 +488,67 @@ fun Joystick(
 @Composable
 fun ActionButtons(controller: GamepadController) {
     Box(modifier = Modifier.size(140.dp)) {
-        Button(
-            onClick = { controller.sendButtonPress("Y") }, 
-            modifier = Modifier.align(Alignment.TopCenter).size(48.dp), 
-            shape = CircleShape, 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("Y") }
-        Button(
-            onClick = { controller.sendButtonPress("A") }, 
-            modifier = Modifier.align(Alignment.BottomCenter).size(48.dp), 
-            shape = CircleShape, 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("A") }
-        Button(
-            onClick = { controller.sendButtonPress("X") }, 
-            modifier = Modifier.align(Alignment.CenterStart).size(48.dp), 
-            shape = CircleShape, 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("X") }
-        Button(
-            onClick = { controller.sendButtonPress("B") }, 
-            modifier = Modifier.align(Alignment.CenterEnd).size(48.dp), 
-            shape = CircleShape, 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("B") }
+        GamepadButton(
+            text = "Y",
+            onPress = { controller.sendButtonDown("Y") },
+            onRelease = { controller.sendButtonUp("Y") },
+            modifier = Modifier.align(Alignment.TopCenter).size(48.dp)
+        )
+        GamepadButton(
+            text = "A",
+            onPress = { controller.sendButtonDown("A") },
+            onRelease = { controller.sendButtonUp("A") },
+            modifier = Modifier.align(Alignment.BottomCenter).size(48.dp)
+        )
+        GamepadButton(
+            text = "X",
+            onPress = { controller.sendButtonDown("X") },
+            onRelease = { controller.sendButtonUp("X") },
+            modifier = Modifier.align(Alignment.CenterStart).size(48.dp)
+        )
+        GamepadButton(
+            text = "B",
+            onPress = { controller.sendButtonDown("B") },
+            onRelease = { controller.sendButtonUp("B") },
+            modifier = Modifier.align(Alignment.CenterEnd).size(48.dp)
+        )
     }
 }
 
 @Composable
 fun DPad(controller: GamepadController) {
     Box(modifier = Modifier.size(140.dp)) {
-        Button(
-            onClick = { controller.sendButtonPress("UP") }, 
-            modifier = Modifier.align(Alignment.TopCenter).size(44.dp), 
-            shape = RoundedCornerShape(8.dp), 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("U") }
-        Button(
-            onClick = { controller.sendButtonPress("DOWN") }, 
-            modifier = Modifier.align(Alignment.BottomCenter).size(44.dp), 
-            shape = RoundedCornerShape(8.dp), 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("D") }
-        Button(
-            onClick = { controller.sendButtonPress("LEFT") }, 
-            modifier = Modifier.align(Alignment.CenterStart).size(44.dp), 
-            shape = RoundedCornerShape(8.dp), 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("L") }
-        Button(
-            onClick = { controller.sendButtonPress("RIGHT") }, 
-            modifier = Modifier.align(Alignment.CenterEnd).size(44.dp), 
-            shape = RoundedCornerShape(8.dp), 
-            contentPadding = PaddingValues(0.dp)
-        ) { Text("R") }
+        GamepadButton(
+            text = "U",
+            onPress = { controller.sendButtonDown("UP") },
+            onRelease = { controller.sendButtonUp("UP") },
+            modifier = Modifier.align(Alignment.TopCenter).size(44.dp)
+        )
+        GamepadButton(
+            text = "D",
+            onPress = { controller.sendButtonDown("DOWN") },
+            onRelease = { controller.sendButtonUp("DOWN") },
+            modifier = Modifier.align(Alignment.BottomCenter).size(44.dp)
+        )
+        GamepadButton(
+            text = "L",
+            onPress = { controller.sendButtonDown("LEFT") },
+            onRelease = { controller.sendButtonUp("LEFT") },
+            modifier = Modifier.align(Alignment.CenterStart).size(44.dp)
+        )
+        GamepadButton(
+            text = "R",
+            onPress = { controller.sendButtonDown("RIGHT") },
+            onRelease = { controller.sendButtonUp("RIGHT") },
+            modifier = Modifier.align(Alignment.CenterEnd).size(44.dp)
+        )
     }
 }
 
 @Composable
 fun SteeringWheel(controller: GamepadController) {
     var rotationAngle by remember { mutableStateOf(0f) }
-    
+
     Box(
         modifier = Modifier
             .size(200.dp)
@@ -537,15 +576,15 @@ fun SteeringWheel(controller: GamepadController) {
             rotate(rotationAngle) {
                 drawCircle(color = Color.LightGray, style = Stroke(width = 16f))
                 drawLine(
-                    color = Color.LightGray, 
-                    start = Offset(16f, size.height / 2), 
-                    end = Offset(size.width - 16f, size.height / 2), 
+                    color = Color.LightGray,
+                    start = Offset(16f, size.height / 2),
+                    end = Offset(size.width - 16f, size.height / 2),
                     strokeWidth = 16f
                 )
                 drawLine(
-                    color = Color.LightGray, 
-                    start = Offset(size.width / 2, size.height / 2), 
-                    end = Offset(size.width / 2, size.height - 16f), 
+                    color = Color.LightGray,
+                    start = Offset(size.width / 2, size.height / 2),
+                    end = Offset(size.width / 2, size.height - 16f),
                     strokeWidth = 16f
                 )
             }
@@ -556,26 +595,22 @@ fun SteeringWheel(controller: GamepadController) {
 @Composable
 fun Pedals(controller: GamepadController) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Bottom) {
-        Button(
-            onClick = { controller.sendButtonPress("BRAKE") },
+        GamepadButton(
+            text = "Brake",
+            onPress = { controller.sendButtonDown("BRAKE") },
+            onRelease = { controller.sendButtonUp("BRAKE") },
             modifier = Modifier
                 .width(80.dp)
-                .height(120.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.7f))
-        ) {
-            Text("Brake")
-        }
-        Button(
-            onClick = { controller.sendButtonPress("GAS") },
+                .height(120.dp)
+        )
+        GamepadButton(
+            text = "Gas",
+            onPress = { controller.sendButtonDown("GAS") },
+            onRelease = { controller.sendButtonUp("GAS") },
             modifier = Modifier
                 .width(80.dp)
-                .height(160.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Green.copy(alpha = 0.7f))
-        ) {
-            Text("Gas")
-        }
+                .height(160.dp)
+        )
     }
 }
 
@@ -594,6 +629,20 @@ class GamepadAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun dispatchKeyEvent(keyCode: Int, action: Int) {
+        val eventTime = System.currentTimeMillis()
+        val keyEvent = KeyEvent(eventTime, eventTime, action, keyCode, 0, 0, 
+            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, android.view.InputDevice.SOURCE_GAMEPAD)
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                dispatchGesture(null, null, null)
+            }
+        } catch (e: Exception) {
+            Log.e("GamepadAccessibility", "Failed to dispatch gesture", e)
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
     override fun onUnbind(intent: Intent?): Boolean {
@@ -607,17 +656,44 @@ class GamepadController {
     private val instrumentation = Instrumentation()
     private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
-    fun sendButtonPress(button: String) {
-        Log.d(TAG, "Button pressed: $button")
+    fun sendButtonDown(button: String) {
+        Log.d(TAG, "Button down: $button")
         val keyCode = getAndroidKeyCode(button)
         if (keyCode != 0) {
             executor.execute {
                 try {
-                    instrumentation.sendKeyDownUpSync(keyCode)
+                    instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to inject key event for $button", e)
-                    executeShellCommand("input keyevent $keyCode")
+                    Log.e(TAG, "Failed to inject key down event for $button", e)
+                    executeShellCommand("input keyevent --down $keyCode")
                 }
+            }
+        }
+    }
+
+    fun sendButtonUp(button: String) {
+        Log.d(TAG, "Button up: $button")
+        val keyCode = getAndroidKeyCode(button)
+        if (keyCode != 0) {
+            executor.execute {
+                try {
+                    instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to inject key up event for $button", e)
+                    executeShellCommand("input keyevent --up $keyCode")
+                }
+            }
+        }
+    }
+
+    fun sendButtonPress(button: String) {
+        sendButtonDown(button)
+        executor.execute {
+            try {
+                Thread.sleep(50)
+                sendButtonUp(button)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to complete button press for $button", e)
             }
         }
     }
@@ -628,12 +704,18 @@ class GamepadController {
             try {
                 when (axis) {
                     "LEFT_X" -> {
-                        if (value < -0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
-                        else if (value > 0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                        if (value < -0.5f) instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+                        else instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT))
+                        
+                        if (value > 0.5f) instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+                        else instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT))
                     }
                     "LEFT_Y" -> {
-                        if (value < -0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
-                        else if (value > 0.5f) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                        if (value < -0.5f) instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP))
+                        else instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP))
+                        
+                        if (value > 0.5f) instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
+                        else instrumentation.sendKeySync(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN))
                     }
                 }
             } catch (e: Exception) {
@@ -658,6 +740,8 @@ class GamepadController {
             "DOWN" -> KeyEvent.KEYCODE_DPAD_DOWN
             "LEFT" -> KeyEvent.KEYCODE_DPAD_LEFT
             "RIGHT" -> KeyEvent.KEYCODE_DPAD_RIGHT
+            "BRAKE" -> KeyEvent.KEYCODE_BUTTON_L2
+            "GAS" -> KeyEvent.KEYCODE_BUTTON_R2
             else -> 0
         }
     }
