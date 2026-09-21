@@ -109,40 +109,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun CloudGripApp(
-    onStartOverlay: () -> Unit,
-    onStopOverlay: () -> Unit,
-    hasOverlayPermission: Boolean,
-    onRequestOverlayPermission: () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("CloudGrip", style = MaterialTheme.typography.headlineMedium)
-        Spacer(modifier = Modifier.height(12.dp))
-        Text("Custom floating gamepad for Cloud Gaming.", style = MaterialTheme.typography.bodyLarge)
-        Spacer(modifier = Modifier.height(28.dp))
-
-        if (!hasOverlayPermission) {
-            Button(onClick = onRequestOverlayPermission) {
-                Text("Grant Overlay Permission")
-            }
-        } else {
-            Button(
-                onClick = onStartOverlay,
-                modifier = Modifier.fillMaxWidth(0.7f)
-            ) {
-                Text("Start Floating Gamepad")
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onStopOverlay,
-                modifier = Modifier.fillMaxWidth(0.7f)
-            ) {
-                Text("Stop Floating Gamepad")
-            }
-        }
+fun CloudGripApp(onStartOverlay: () -> Unit, onStopOverlay: () -> Unit, hasOverlayPermission: Boolean, onRequestOverlayPermission: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("CloudGrip Dashboard", style = MaterialTheme.typography.headlineMedium)
+        Text("Game Hub", style = MaterialTheme.typography.titleMedium)
+        Row { Button(onClick = {}) { Text("Xbox Cloud") }; Button(onClick = {}) { Text("GeForce NOW") } }
+        Spacer(Modifier.height(20.dp))
+        if (!hasOverlayPermission) Button(onClick = onRequestOverlayPermission) { Text("Enable Overlays") }
+        else { Button(onClick = onStartOverlay) { Text("Start Overlay") }; Button(onClick = onStopOverlay) { Text("Stop") } }
     }
 }
